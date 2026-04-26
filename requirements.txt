@@ -1,6 +1,5 @@
 faiss-cpu==1.13.2
 sentence-transformers==5.4.1
 pypdf2==3.0.1
-google-generativeai
+requests
 streamlit
-python-dotenv

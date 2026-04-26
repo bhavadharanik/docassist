@@ -15,7 +15,7 @@ Built to demonstrate a complete **Retrieval Augmented Generation (RAG)** pipelin
                                                                      │
 ┌─────────────┐     ┌───────────────┐     ┌──────────────┐          │
 │   Answer +   │◀───│  Generator    │◀───│  Retriever    │◀─────────┘
-│  Citations   │     │ Gemini 2.0   │     │  Top-K + threshold      │
+│  Citations   │     │ Ollama   │     │  Top-K + threshold      │
 └─────────────┘     └───────────────┘     └──────────────┘
                                                 ▲
                                                 │
@@ -32,7 +32,7 @@ Built to demonstrate a complete **Retrieval Augmented Generation (RAG)** pipelin
 | 1 | `chunker.py` | Extracts PDF text, splits into overlapping chunks | PyPDF2, sliding window (500 chars, 100 overlap) |
 | 2 | `embedder.py` | Converts text chunks to dense vectors | sentence-transformers (all-MiniLM-L6-v2) |
 | 3 | `retriever.py` | Finds most similar chunks to query | FAISS cosine similarity, top-K with threshold |
-| 4 | `generator.py` | Generates answer grounded in retrieved context | Google Gemini 2.0 Flash |
+| 4 | `generator.py` | Generates answer grounded in retrieved context | Ollama (gemma3:4b, local) |
 | 5 | `evaluator.py` | Evaluates retrieval + generation quality | Precision, Recall, F1, MRR, NDCG, LLM-as-Judge |
 | UI | `app.py` | Chat + Evaluation dashboard | Streamlit (tabbed layout) |
 
@@ -61,8 +61,8 @@ pip install -r requirements.txt
 # Download embedding model (one-time, ~80MB)
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2', cache_folder='model_cache')"
 
-# Set up API key
-echo "GEMINI_API_KEY=your_key_here" > .env
+# Install and start Ollama (https://ollama.ai)
+ollama pull gemma3:4b
 
 # Run
 streamlit run app.py
@@ -108,7 +108,7 @@ Compares 24+ configurations of chunk_size × overlap × top_k, ranked by F1 scor
 
 - **Embeddings**: sentence-transformers (all-MiniLM-L6-v2)
 - **Vector Search**: FAISS (Facebook AI Similarity Search)
-- **Generation**: Google Gemini 2.0 Flash
+- **Generation**: Ollama (gemma3:4b, local)
 - **PDF Parsing**: PyPDF2
 - **UI**: Streamlit
 - **Language**: Python

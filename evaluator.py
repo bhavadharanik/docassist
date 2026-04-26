@@ -158,6 +158,24 @@ def ndcg_at_k(retrieved_chunks: list[dict], expected_keywords: list[str]) -> flo
 #   - Best practice: use a stronger model as judge than as generator
 # =============================================================================
 
+def _call_ollama(prompt: str) -> str:
+    """Helper to call Ollama for LLM-as-judge evaluations."""
+    import requests
+
+    response = requests.post(
+        "http://localhost:11434/api/generate",
+        json={
+            "model": "gemma3:4b",
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.1},
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()["response"]
+
+
 def evaluate_faithfulness(query: str, context: str, answer: str) -> dict:
     """
     Faithfulness: Is the answer grounded in the retrieved context?
@@ -173,16 +191,6 @@ def evaluate_faithfulness(query: str, context: str, answer: str) -> dict:
     Analogy: Code review. Is every line of code justified by the requirements?
     Or did the developer add features nobody asked for (hallucination)?
     """
-    import google.generativeai as genai
-    import os
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return {"score": 0, "reasoning": "No API key", "error": True}
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-
     prompt = f"""You are evaluating a RAG system's answer for faithfulness.
 
 Faithfulness = Is the answer supported by the provided context?
@@ -201,15 +209,11 @@ Score the answer from 1-5:
 2 = Significant claims not in context
 1 = Answer mostly makes things up / ignores context
 
-Respond in this exact JSON format:
+Respond in this exact JSON format only, no other text:
 {{"score": <1-5>, "reasoning": "<one sentence explanation>"}}"""
 
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(temperature=0.1),
-        )
-        text = response.text.strip()
+        text = _call_ollama(prompt).strip()
         # Extract JSON from response (handle markdown code blocks)
         if "```" in text:
             text = text.split("```")[1]
@@ -236,16 +240,6 @@ def evaluate_relevance(query: str, answer: str) -> dict:
     with perfectly accurate info about... database migrations. Faithful
     to the context, but not what you asked.
     """
-    import google.generativeai as genai
-    import os
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return {"score": 0, "reasoning": "No API key", "error": True}
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-
     prompt = f"""You are evaluating if an answer is relevant to the question asked.
 
 QUESTION: {query}
@@ -259,15 +253,11 @@ Score from 1-5:
 2 = Tangentially related but doesn't answer the question
 1 = Completely irrelevant to the question
 
-Respond in this exact JSON format:
+Respond in this exact JSON format only, no other text:
 {{"score": <1-5>, "reasoning": "<one sentence explanation>"}}"""
 
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(temperature=0.1),
-        )
-        text = response.text.strip()
+        text = _call_ollama(prompt).strip()
         if "```" in text:
             text = text.split("```")[1]
             if text.startswith("json"):

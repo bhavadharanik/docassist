@@ -40,7 +40,7 @@ with st.sidebar:
     ```
     PDF → Chunk → Embed → FAISS
     Query → Embed → Search
-    Top-K → Gemini 2.0 → Answer
+    Top-K → Ollama → Answer
     ```
     """)
 
@@ -177,7 +177,7 @@ if uploaded_file:
 
             # Generation evaluation (LLM-as-judge)
             st.markdown("### Generation Evaluation")
-            st.markdown("*Using Gemini as a judge to score the generated answer (LLM-as-Judge pattern)*")
+            st.markdown("*Using Ollama as a judge to score the generated answer (LLM-as-Judge pattern)*")
 
             with st.spinner("Generating answer and evaluating..."):
                 response = generate_answer(eval_query, retrieved)
@@ -287,6 +287,6 @@ else:
     | 4. Store | Index vectors for search | FAISS (Facebook AI Similarity Search) |
     | 5. Query | Embed question with same model | sentence-transformers |
     | 6. Retrieve | Find similar chunks | FAISS cosine similarity, top-K |
-    | 7. Generate | LLM answers with context | Google Gemini 2.0 Flash |
+    | 7. Generate | LLM answers with context | Ollama (gemma3:4b) |
     | 8. Cite | Reference source chunks | Citation enforcement in prompt |
     """)

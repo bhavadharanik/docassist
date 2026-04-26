@@ -1,12 +1,13 @@
 """
 GENERATOR — Step 4 of RAG Pipeline
-Uses Google Gemini for grounded answer generation.
+Uses Ollama (local LLM) for grounded answer generation.
+No API key needed. Runs completely offline.
 """
 
-import os
-from dotenv import load_dotenv
+import requests
 
-load_dotenv()
+OLLAMA_URL = "http://localhost:11434/api/generate"
+MODEL = "gemma3:4b"
 
 SYSTEM_PROMPT = """You are a helpful document assistant. Answer the user's question
 based ONLY on the provided context chunks. Follow these rules strictly:
@@ -19,26 +20,12 @@ based ONLY on the provided context chunks. Follow these rules strictly:
 
 
 def generate_answer(query: str, retrieved_chunks: list[dict]) -> dict:
-    import google.generativeai as genai
-
-    model_name = "gemini-2.0-flash"
-
     if not retrieved_chunks:
         return {
             "answer": "No relevant information found in the uploaded documents.",
             "chunks_used": 0,
-            "model": model_name,
+            "model": MODEL,
         }
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return {
-            "answer": "Error: GEMINI_API_KEY not set in .env file.",
-            "chunks_used": 0,
-            "model": model_name,
-        }
-
-    genai.configure(api_key=api_key)
 
     context = "\n\n".join(
         f"[Chunk {chunk['chunk_id']}] (relevance: {chunk['score']:.2f}):\n{chunk['text']}"
@@ -56,17 +43,23 @@ def generate_answer(query: str, retrieved_chunks: list[dict]) -> dict:
 --- ANSWER ---"""
 
     try:
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(temperature=0.2),
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.2},
+            },
+            timeout=120,
         )
-        answer = response.text
+        response.raise_for_status()
+        answer = response.json()["response"]
     except Exception as e:
-        answer = f"Error calling Gemini: {str(e)}"
+        answer = f"Error calling Ollama: {str(e)}"
 
     return {
         "answer": answer,
         "chunks_used": len(retrieved_chunks),
-        "model": model_name,
+        "model": MODEL,
     }
