@@ -35,8 +35,8 @@ with st.sidebar:
     **RAG Pipeline:**
     ```
     PDF → Chunk → Embed → FAISS
-    Question → Embed → Search
-    Top-K → Gemini → Answer
+    Query → Embed → Search
+    Top-K → Gemini 2.0 → Answer
     ```
     """)
 
@@ -118,6 +118,6 @@ else:
     | 4. Store | Index vectors for search | FAISS (Facebook AI Similarity Search) |
     | 5. Query | Embed question with same model | sentence-transformers |
     | 6. Retrieve | Find similar chunks | FAISS cosine similarity, top-K |
-    | 7. Generate | LLM answers with context | Google Gemini 1.5 Flash |
+    | 7. Generate | LLM answers with context | Google Gemini 2.0 Flash |
     | 8. Cite | Reference source chunks | Citation enforcement in prompt |
     """)

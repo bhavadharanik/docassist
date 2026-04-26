@@ -3,3 +3,5 @@ venv/
 __pycache__/
 *.pyc
 faiss_index/
+model_cache/
+*.egg-info/
