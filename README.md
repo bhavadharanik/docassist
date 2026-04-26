@@ -33,8 +33,8 @@ Built to demonstrate a complete **Retrieval Augmented Generation (RAG)** pipelin
 | 2 | `embedder.py` | Converts text chunks to dense vectors | sentence-transformers (all-MiniLM-L6-v2) |
 | 3 | `retriever.py` | Finds most similar chunks to query | FAISS cosine similarity, top-K with threshold |
 | 4 | `generator.py` | Generates answer grounded in retrieved context | Google Gemini 2.0 Flash |
-| 5 | `evaluator.py` | Measures retrieval quality (precision, MRR) | Custom evaluation framework |
-| UI | `app.py` | Interactive chat interface | Streamlit |
+| 5 | `evaluator.py` | Evaluates retrieval + generation quality | Precision, Recall, F1, MRR, NDCG, LLM-as-Judge |
+| UI | `app.py` | Chat + Evaluation dashboard | Streamlit (tabbed layout) |
 
 ## Key Design Decisions
 
@@ -70,13 +70,39 @@ streamlit run app.py
 
 ## Evaluation
 
-Test retrieval quality with the evaluation module:
+The evaluation module measures both **retrieval quality** and **generation quality**.
+
+### Retrieval Metrics
+| Metric | What it measures | Analogy |
+|--------|-----------------|---------|
+| **Precision@K** | % of retrieved chunks that are relevant | Grep results — how many are useful? |
+| **Recall** | % of all relevant chunks that were found | Did your search miss any important files? |
+| **F1 Score** | Harmonic mean of precision and recall | Single number balancing both |
+| **MRR** | How high the first relevant result ranks | Google search — is the answer on page 1? |
+| **NDCG** | Are relevant results ranked at the top? | Penalizes good results at bad positions |
+
+### Generation Metrics (LLM-as-Judge)
+| Metric | What it measures | Score |
+|--------|-----------------|-------|
+| **Faithfulness** | Is the answer grounded in retrieved context? | 1-5 (5 = no hallucination) |
+| **Answer Relevance** | Does the answer address the question? | 1-5 (5 = directly answers) |
+
+### Usage
 
 ```bash
+# Retrieval evaluation only
 python evaluator.py your_document.pdf
+
+# Full evaluation (retrieval + generation with LLM-as-judge)
+python evaluator.py your_document.pdf --full
+
+# Parameter sweep (find optimal chunk_size, overlap, top_k)
+python evaluator.py your_document.pdf --sweep
 ```
 
-Returns precision (% of retrieved chunks that are relevant) and MRR (how high the first relevant chunk ranks).
+### Parameter Sweep
+
+Compares 24+ configurations of chunk_size × overlap × top_k, ranked by F1 score. Helps find the optimal RAG setup for your specific documents.
 
 ## Tech Stack
 
