@@ -6,7 +6,9 @@ Run: streamlit run app.py
 import streamlit as st
 from chunker import load_pdf, chunk_text
 from embedder import get_model, embed_chunks
-from retriever import retrieve
+from retriever import (
+    retrieve_semantic, retrieve_keyword, retrieve_hybrid, BM25,
+)
 from generator import generate_answer
 from evaluator import (
     precision_at_k, recall, mean_reciprocal_rank, ndcg_at_k,
@@ -34,15 +36,51 @@ with st.sidebar:
     chunk_overlap = st.slider("Chunk overlap (chars)", 0, 200, 100, 25)
     top_k = st.slider("Top-K results", 1, 10, 5)
     threshold = st.slider("Relevance threshold", 0.0, 1.0, 0.1, 0.05)
+
+    st.divider()
+    st.header("Retrieval Method")
+    retrieval_method = st.radio(
+        "Search strategy",
+        ["Hybrid (recommended)", "Semantic only", "Keyword only"],
+        help="Hybrid = semantic + keyword (BM25) combined via Reciprocal Rank Fusion",
+    )
+    if retrieval_method == "Hybrid (recommended)":
+        semantic_weight = st.slider(
+            "Semantic weight",
+            0.0, 1.0, 0.6, 0.1,
+            help="0.6 = 60% semantic, 40% keyword. Tune based on your evaluation results.",
+        )
+
     st.divider()
     st.markdown("""
     **RAG Pipeline:**
     ```
     PDF → Chunk → Embed → FAISS
-    Query → Embed → Search
+                → BM25 Index
+    Query → Hybrid Search
     Top-K → Ollama → Answer
     ```
     """)
+
+
+def do_retrieve(query):
+    """Run retrieval using the selected method."""
+    if retrieval_method == "Semantic only":
+        return retrieve_semantic(
+            query, st.session_state.index, st.session_state.chunks,
+            model, top_k=top_k, threshold=threshold,
+        )
+    elif retrieval_method == "Keyword only":
+        return retrieve_keyword(
+            query, st.session_state.chunks, st.session_state.bm25, top_k=top_k,
+        )
+    else:
+        return retrieve_hybrid(
+            query, st.session_state.index, st.session_state.chunks,
+            model, st.session_state.bm25, top_k=top_k,
+            threshold=threshold, semantic_weight=semantic_weight,
+        )
+
 
 if uploaded_file:
     if "chunks" not in st.session_state or st.session_state.get("file_name") != uploaded_file.name:
@@ -50,9 +88,11 @@ if uploaded_file:
             text = load_pdf(uploaded_file)
             chunks = chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
             index, embeddings = embed_chunks(chunks, model)
+            bm25 = BM25(chunks)
 
             st.session_state.chunks = chunks
             st.session_state.index = index
+            st.session_state.bm25 = bm25
             st.session_state.file_name = uploaded_file.name
             st.session_state.doc_text = text
 
@@ -65,8 +105,8 @@ if uploaded_file:
 
     st.divider()
 
-    # Two tabs: Chat and Evaluate
-    tab_chat, tab_eval = st.tabs(["💬 Chat", "📊 Evaluate"])
+    # Three tabs: Chat, Evaluate, Compare
+    tab_chat, tab_eval, tab_compare = st.tabs(["💬 Chat", "📊 Evaluate", "🔍 Compare Retrievers"])
 
     # =========================================================================
     # CHAT TAB
@@ -92,25 +132,19 @@ if uploaded_file:
 
             with st.chat_message("assistant"):
                 with st.spinner("Searching and generating..."):
-                    results = retrieve(
-                        query=query,
-                        index=st.session_state.index,
-                        chunks=st.session_state.chunks,
-                        model=model,
-                        top_k=top_k,
-                        threshold=threshold,
-                    )
+                    results = do_retrieve(query)
                     response = generate_answer(query, results)
                     st.markdown(response["answer"])
 
                     if results:
                         with st.expander("📚 Source Chunks"):
                             for src in results:
-                                st.markdown(f"**Chunk {src['chunk_id']}** (score: {src['score']:.2f})")
+                                method_tag = f" [{src.get('method', 'unknown')}]" if src.get('method') else ""
+                                st.markdown(f"**Chunk {src['chunk_id']}** (score: {src['score']:.3f}){method_tag}")
                                 st.text(src["text"][:300] + "..." if len(src["text"]) > 300 else src["text"])
                                 st.divider()
 
-                    st.caption(f"Model: {response['model']} | Chunks used: {response['chunks_used']} | Top-K: {top_k}")
+                    st.caption(f"Model: {response['model']} | Chunks used: {response['chunks_used']} | Method: {retrieval_method}")
 
             st.session_state.messages.append({
                 "role": "assistant",
@@ -138,14 +172,7 @@ if uploaded_file:
             keywords = [kw.strip() for kw in eval_keywords.split(",") if kw.strip()]
 
             with st.spinner("Evaluating retrieval..."):
-                retrieved = retrieve(
-                    query=eval_query,
-                    index=st.session_state.index,
-                    chunks=st.session_state.chunks,
-                    model=model,
-                    top_k=top_k,
-                    threshold=threshold,
-                )
+                retrieved = do_retrieve(eval_query)
 
                 # Retrieval metrics
                 p = precision_at_k(retrieved, keywords)
@@ -155,9 +182,7 @@ if uploaded_file:
                 f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
 
             st.markdown("### Retrieval Metrics")
-            st.markdown("""
-            *These measure: did we fetch the right chunks?*
-            """)
+            st.markdown("*These measure: did we fetch the right chunks?*")
 
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Precision", f"{p:.2f}", help="What % of retrieved chunks are relevant")
@@ -224,7 +249,6 @@ if uploaded_file:
 
         if st.button("Run Parameter Sweep") and sweep_query and sweep_keywords:
             keywords = [kw.strip() for kw in sweep_keywords.split(",") if kw.strip()]
-            test_case = [{"query": sweep_query, "expected_keywords": keywords}]
 
             configs = []
             for cs in [300, 500, 800]:
@@ -242,8 +266,10 @@ if uploaded_file:
 
                 chunks_sweep = chunk_text(st.session_state.doc_text, chunk_size=cs, overlap=ol)
                 index_sweep, _ = embed_chunks(chunks_sweep, model)
-                retrieved_sweep = retrieve(
-                    sweep_query, index_sweep, chunks_sweep, model, top_k=k, threshold=threshold,
+                bm25_sweep = BM25(chunks_sweep)
+                retrieved_sweep = retrieve_hybrid(
+                    sweep_query, index_sweep, chunks_sweep, model, bm25_sweep,
+                    top_k=k, threshold=threshold,
                 )
 
                 p = precision_at_k(retrieved_sweep, keywords)
@@ -275,6 +301,86 @@ if uploaded_file:
                     f"(F1={best['F1']}, Precision={best['Precision']}, Recall={best['Recall']})"
                 )
 
+    # =========================================================================
+    # COMPARE RETRIEVERS TAB
+    # =========================================================================
+    with tab_compare:
+        st.subheader("Compare Retrieval Methods")
+        st.markdown("""
+        Run the **same query** through all three retrieval methods and compare results side-by-side.
+        This shows you exactly where each method wins and loses.
+
+        **Why this matters for interviews:**
+        - Semantic search understands meaning ("car" matches "automobile")
+        - Keyword search (BM25) finds exact terms ("NDCG" matches "NDCG")
+        - Hybrid combines both — production systems always use hybrid
+        """)
+
+        cmp_query = st.text_input("Compare query", placeholder="e.g., What is NDCG?", key="cmp_q")
+        cmp_keywords = st.text_input(
+            "Expected keywords",
+            placeholder="e.g., NDCG, ranking, relevance, gain",
+            key="cmp_kw",
+        )
+
+        if st.button("Compare All Methods", type="primary") and cmp_query and cmp_keywords:
+            keywords = [kw.strip() for kw in cmp_keywords.split(",") if kw.strip()]
+
+            with st.spinner("Running all three retrieval methods..."):
+                sem_results = retrieve_semantic(
+                    cmp_query, st.session_state.index, st.session_state.chunks,
+                    model, top_k=top_k, threshold=threshold,
+                )
+                kw_results = retrieve_keyword(
+                    cmp_query, st.session_state.chunks, st.session_state.bm25, top_k=top_k,
+                )
+                hyb_results = retrieve_hybrid(
+                    cmp_query, st.session_state.index, st.session_state.chunks,
+                    model, st.session_state.bm25, top_k=top_k, threshold=threshold,
+                )
+
+            # Metrics comparison table
+            comparison = []
+            for name, results in [("Semantic", sem_results), ("Keyword (BM25)", kw_results), ("Hybrid (RRF)", hyb_results)]:
+                p = precision_at_k(results, keywords)
+                r = recall(results, st.session_state.chunks, keywords)
+                f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+                mrr = mean_reciprocal_rank(results, keywords)
+                ndcg = ndcg_at_k(results, keywords)
+                comparison.append({
+                    "Method": name,
+                    "Precision": round(p, 3),
+                    "Recall": round(r, 3),
+                    "F1": round(f1, 3),
+                    "MRR": round(mrr, 3),
+                    "NDCG": round(ndcg, 3),
+                    "Chunks Found": len(results),
+                })
+
+            st.dataframe(comparison, use_container_width=True)
+
+            # Find winner
+            best_method = max(comparison, key=lambda x: x["F1"])
+            st.success(f"Winner: **{best_method['Method']}** with F1={best_method['F1']}")
+
+            # Side-by-side chunk details
+            st.markdown("### Retrieved Chunks by Method")
+            col_sem, col_kw, col_hyb = st.columns(3)
+
+            for col, name, results in [
+                (col_sem, "Semantic", sem_results),
+                (col_kw, "Keyword", kw_results),
+                (col_hyb, "Hybrid", hyb_results),
+            ]:
+                with col:
+                    st.markdown(f"**{name}**")
+                    if not results:
+                        st.caption("No results")
+                    for chunk in results[:5]:
+                        is_rel = any(kw.lower() in chunk["text"].lower() for kw in keywords)
+                        icon = "✅" if is_rel else "❌"
+                        st.caption(f"{icon} Chunk {chunk['chunk_id']} (score: {chunk['score']:.3f})")
+
 else:
     st.info("👈 Upload a PDF document to get started")
     st.markdown("""
@@ -284,9 +390,9 @@ else:
     | 1. Upload | PDF text extraction | PyPDF2 |
     | 2. Chunk | Split into overlapping pieces | Custom chunker (500 chars, 100 overlap) |
     | 3. Embed | Convert text to vectors | sentence-transformers (all-MiniLM-L6-v2) |
-    | 4. Store | Index vectors for search | FAISS (Facebook AI Similarity Search) |
-    | 5. Query | Embed question with same model | sentence-transformers |
-    | 6. Retrieve | Find similar chunks | FAISS cosine similarity, top-K |
-    | 7. Generate | LLM answers with context | Ollama (gemma3:4b) |
-    | 8. Cite | Reference source chunks | Citation enforcement in prompt |
+    | 4. Store | Index for search | FAISS (semantic) + BM25 (keyword) |
+    | 5. Query | Search with selected method | Semantic, Keyword, or Hybrid (RRF) |
+    | 6. Generate | LLM answers with context | Ollama (gemma3:4b) |
+    | 7. Cite | Reference source chunks | Citation enforcement in prompt |
+    | 8. Evaluate | Measure retrieval + generation quality | Precision, Recall, F1, MRR, NDCG, LLM-as-Judge |
     """)
